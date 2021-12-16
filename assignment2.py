@@ -1,7 +1,8 @@
 ############# 1 ################
 import os
+import sys
 import json
-from osgeo import gdal, ogr
+from osgeo import gdal, ogr,osr
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from matplotlib import pyplot as plt
@@ -41,17 +42,51 @@ food_per_capita = {
 
 data_dir = r".\data"
 os.chdir(data_dir)
+# Providing the file path seperator and the raster file name in a variable
+# in case of file name change
+path_sep = "/"
+raster_file_name = "sdn_crops.tif"
+sdn_cropsDs = gdal.Open(raster_file_name)
 
-sdn_cropsDs = gdal.Open("sdn_crops.tif")
+# Check if the sdn_cropsDS is opened or not. If not opened,
+# print an warning message and exit
 
+if sdn_cropsDs is None:
+    relative_file_path = path_sep.join([data_dir,raster_file_name])    
+    absolute_file_path = os.path.abspath(relative_file_path)
+    print(f"The raster file is not opened. Kindly check the path and file name of the raster: \n{absolute_file_path}")
+    sys.exit()
+
+# Defining nrbands to get the number of bands from the raster
+nrbands = sdn_cropsDs.RasterCount
 print("There are " + str(nrbands) + " bands")
 
+# Defining sdn_xSize to get the Raster X size i.e width
+sdn_xSize = sdn_cropsDs.RasterXSize
+
+# Defining sdn_xSize to get the Raster Y size i.e height
+sdn_ySize = sdn_cropsDs.RasterYSize
 print("x size: ", sdn_xSize, " y size: ", sdn_ySize)
 
 rasterProjection = sdn_cropsDs.GetProjection()
+
+# Get the spatial reference from ogr module and set the well known text (wkt)
+# to the raster projection
+spatialRef = osr.SpatialReference(wkt=rasterProjection)
 print("EPSG Code:", int(spatialRef.GetAttrValue("AUTHORITY", 1)))
 
-print("No data value", no_data_value)
+
+# Get the No data value for all the bands and assign it to a dictionary
+# with key as band number
+no_data_value = {i:sdn_cropsDs.GetRasterBand(i).GetNoDataValue()
+                                for i in range(1,nrbands+1)}
+print("NoData value", json.dumps(no_data_value,indent=1))
+
+# Checking if the No data values for all the bands are
+# same using the all() method. True if same, False if not same
+same_no_data_value = all(no_data_value.values())
+print(f"NoData value same for all bands? {same_no_data_value}")
+
 
 rasterGeotransform = sdn_cropsDs.GetGeoTransform()
 if rasterGeotransform is not None:
@@ -59,10 +94,26 @@ if rasterGeotransform is not None:
     ulx = rasterGeotransform[0]
     uly = rasterGeotransform[3]
 
+    # The formula to get the lower right x and lower right y coordinates
+    # To get lrx (lower right x), Add the ulx to the product of number of columns
+    # i.e. RasterXsize and pixel resolution 
+    # along the w-e. Also add the RasterYsize to the rotation of x angle (In case there is skewness)
+    # The same is done vice versa for the lower right y (lry) 
+    lrx = ulx + sdn_xSize*rasterGeotransform[1] + sdn_ySize*rasterGeotransform[2]
+    lry = uly + sdn_ySize*rasterGeotransform[5] + sdn_xSize*rasterGeotransform[4]
     extent = [ulx, lry, lrx, uly]
 
     print("extent:", extent)
     print()
+
+# Running a comprehensive loop to get the minimum and maximum values of all the bands
+raster_statistics = {f"Band {i}":{"Minimum":sdn_cropsDs.GetRasterBand(i).GetMinimum(),
+                                  "Maximum":sdn_cropsDs.GetRasterBand(i).GetMaximum()}
+                                  for i in range(1,nrbands+1)}
+
+
+print("Minimum and maximum values of the bands : ")
+print(json.dumps(raster_statistics,indent=2))
 
 ############# 2 ################
 print("#" * 10, " Block 2", "#" * 10)
