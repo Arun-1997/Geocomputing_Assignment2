@@ -9,7 +9,10 @@ from matplotlib import pyplot as plt
 import geopandas as gpd
 from shapely import speedups
 import numpy as np
-
+try:
+    import mapclassify
+except ModuleNotFoundError:
+    print("Warning! Map Classify not installed. Legend for map might not be properly classified!")
 ##################################
 print("#" * 10, " Block 1", "#" * 10)
 print()
@@ -284,11 +287,11 @@ print()
 print("#" * 10, " Block 5", "#" * 10)
 
 data_directory = os.getcwd()
-output_data_file = "sdn_market_dynamics.json"
+output_data_file = "sdn_market_dynamics.geojson"
 file_path_output = os.path.join(data_directory, output_data_file)  # saving in the current directory
 
 if os.path.exists(file_path_output):
-    print('File already existed, removing the old version')
+    print("File already existed, removing the old version")
     os.remove(file_path_output)  # remove the file if it already exists to create the new file
 
 driver = ogr.GetDriverByName('GeoJSON')
@@ -297,11 +300,12 @@ output_ds = driver.CreateDataSource(file_path_output)
 input_layer_srs = input_layer.GetSpatialRef()  # using the same crs info as the original layer
 
 output_layer = output_ds.CreateLayer(output_data_file, input_layer_srs, ogr.wkbPolygon)
-
-field_names = ["crop", "prod", "cons"]
+oft_int = "OFTInteger"
+oft_str = "OFTString"
+field_names = [("objectid",oft_int),("crop",oft_str), ("prod",oft_int), ("cons",oft_int)]
 
 for val in field_names:
-    field_name = ogr.FieldDefn(val, ogr.OFTString)    # type can be changed -- Best way to do it - discuss
+    field_name = ogr.FieldDefn(val[0], getattr(ogr,val[1]))    # type can be changed -- Best way to do it - discuss
     field_name.SetWidth(24)
     output_layer.CreateField(field_name)
 
@@ -309,11 +313,14 @@ for infeature in input_layer:
     objectId = infeature.GetFieldAsInteger("objectid")
     if objectId in most_important_crop_per_catchment.keys():
         outfeature = ogr.Feature(output_layer.GetLayerDefn())
-        i = 0
+        
         for i in range(len(field_names)):
-            outfeature.SetField(field_names[i], most_important_crop_per_catchment[objectId][i])
-            i = i + 1
-
+            fld_attr = field_names[i]
+            if fld_attr[0] == "objectid":
+                outfeature.SetField(fld_attr[0],objectId)
+            else:
+                outfeature.SetField(fld_attr[0], most_important_crop_per_catchment[objectId][i-1])
+        
         outfeature.SetGeometry(infeature.GetGeometryRef())
         output_layer.CreateFeature(outfeature)
         outfeature = None
@@ -324,15 +331,24 @@ city_catchmentsDs = None
 output_ds = None
 
 # ############# 6 ################
-# print("#" * 10, " Block 6", "#" * 10)
-# print()
-#
-# speedups.disable()
-#
-# print(catchment_df)
-# print()
-#
-# catchment_df.plot(column="diff", legend="True")
-# plt.show()
+print("#" * 10, " Block 6", "#" * 10)
+print()
+
+speedups.disable()
+catchment_df = gpd.read_file(file_path_output)
+
+
+# Add a new column in the geodataframe for the difference
+catchment_df["diff"] = catchment_df["prod"] - catchment_df["cons"]
+print(catchment_df)
+
+# plotting the map classified by 
+# diff value and displaying the chloropleth map
+catchment_df.plot(column="diff", legend="True",cmap = "RdYlBu_r",legend_kwds={"label": "Surplus/Deficit",
+                                                                                            'orientation': "vertical"})
+plt.title("Surplus or Deficit of crops in Sudan")
+plt.show()
+
+
 #
 # ############# END ################
