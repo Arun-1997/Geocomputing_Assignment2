@@ -9,10 +9,6 @@ from matplotlib import pyplot as plt
 import geopandas as gpd
 from shapely import speedups
 import numpy as np
-try:
-    import mapclassify
-except ModuleNotFoundError:
-    print("Warning! Map Classify not installed. Legend for map might not be properly classified!")
 ##################################
 print("#" * 10, " Block 1", "#" * 10)
 print()
@@ -344,8 +340,10 @@ print(catchment_df)
 
 # plotting the map classified by 
 # diff value and displaying the chloropleth map
-catchment_df.plot(column="diff", legend="True",cmap = "RdYlBu_r",legend_kwds={"label": "Surplus/Deficit",
-                                                                                            'orientation': "vertical"})
+
+catchment_df.plot(column="diff", legend="True",cmap = "Reds_r",
+                 legend_kwds={"label": "Surplus/Deficit","orientation": "vertical"})
+
 plt.title("Surplus or Deficit of crops in Sudan")
 plt.show()
 
