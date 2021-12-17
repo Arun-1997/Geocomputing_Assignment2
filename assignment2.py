@@ -2,12 +2,14 @@
 import os
 import sys
 import json
-from osgeo import gdal, ogr,osr
+from osgeo import gdal, ogr,osr,gdal_array as gdarr
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from matplotlib import pyplot as plt
 import geopandas as gpd
 from shapely import speedups
+import numpy as np
+
 
 ##################################
 print("#" * 10, " Block 1", "#" * 10)
@@ -61,7 +63,7 @@ if sdn_cropsDs is None:
 nrbands = sdn_cropsDs.RasterCount
 print("There are " + str(nrbands) + " bands")
 
-# Defining sdn_xSize to get the Raster X size i.e width
+# 1.1 Defining sdn_xSize to get the Raster X size i.e width
 sdn_xSize = sdn_cropsDs.RasterXSize
 
 # Defining sdn_xSize to get the Raster Y size i.e height
@@ -70,22 +72,12 @@ print("x size: ", sdn_xSize, " y size: ", sdn_ySize)
 
 rasterProjection = sdn_cropsDs.GetProjection()
 
-# Get the spatial reference from ogr module and set the well known text (wkt)
+# 1.2 Get the spatial reference from ogr module and set the well known text (wkt)
 # to the raster projection
 spatialRef = osr.SpatialReference(wkt=rasterProjection)
 print("EPSG Code:", int(spatialRef.GetAttrValue("AUTHORITY", 1)))
 
 
-# Get the No data value for all the bands and assign it to a dictionary
-# with key as band number
-no_data_value = {i:sdn_cropsDs.GetRasterBand(i).GetNoDataValue()
-                                for i in range(1,nrbands+1)}
-print("NoData value", json.dumps(no_data_value,indent=1))
-
-# Checking if the No data values for all the bands are
-# same using the all() method. True if same, False if not same
-same_no_data_value = all(no_data_value.values())
-print(f"NoData value same for all bands? {same_no_data_value}")
 
 
 rasterGeotransform = sdn_cropsDs.GetGeoTransform()
@@ -94,10 +86,10 @@ if rasterGeotransform is not None:
     ulx = rasterGeotransform[0]
     uly = rasterGeotransform[3]
 
-    # The formula to get the lower right x and lower right y coordinates
+    # 1.3 The formula to get the lower right x and lower right y coordinates
     # To get lrx (lower right x), Add the ulx to the product of number of columns
-    # i.e. RasterXsize and pixel resolution 
-    # along the w-e. Also add the RasterYsize to the rotation of x angle (In case there is skewness)
+    # i.e. RasterXsize and pixel resolution along the w-e. 
+    # Also add the RasterYsize to the rotation of x angle (In case there is skewness)
     # The same is done vice versa for the lower right y (lry) 
     lrx = ulx + sdn_xSize*rasterGeotransform[1] + sdn_ySize*rasterGeotransform[2]
     lry = uly + sdn_ySize*rasterGeotransform[5] + sdn_xSize*rasterGeotransform[4]
@@ -106,7 +98,21 @@ if rasterGeotransform is not None:
     print("extent:", extent)
     print()
 
-# Running a comprehensive loop to get the minimum and maximum values of all the bands
+
+# 1.4 Get the No data value for all the bands and assign it to a dictionary
+# with key as band number
+no_data_value = {i:sdn_cropsDs.GetRasterBand(i).GetNoDataValue()
+                                for i in range(1,nrbands+1)}
+print("NoData value", json.dumps(no_data_value,indent=1))
+
+# Checking if the No data values for all the bands are
+# same using the all() method. True if same, False if not same
+no_data_value_list = list(no_data_value.values())
+same_no_data_value = all(i == no_data_value_list[0] for i in no_data_value_list)
+print(f"NoData value same for all bands? {same_no_data_value}")
+
+
+# 1.5 Running a comprehensive loop to get the minimum and maximum values of all the bands
 raster_statistics = {f"Band {i}":{"Minimum":sdn_cropsDs.GetRasterBand(i).GetMinimum(),
                                   "Maximum":sdn_cropsDs.GetRasterBand(i).GetMaximum()}
                                   for i in range(1,nrbands+1)}
@@ -143,12 +149,9 @@ layerFeatureNum = input_layer.GetFeatureCount()     #Getting the number of featu
 print("Number of features: " + str(layerFeatureNum))
 
 #2.4
-
 #Creating a dictionary of areas and object id of all the catchment
-areas = {}
-for feature in input_layer:
-    featureArea = feature.GetGeometryRef().Area()
-    areas[int(feature['objectid'])] = featureArea
+areas = {int(feature["objectid"]):feature.GetGeometryRef().GetArea() 
+                                 for feature in input_layer}
 
 #Extracting the minimum area and the corresponding object id
 small_and_largeCatchments = {
@@ -173,64 +176,125 @@ print(
 
 
 # ############# 3 ################
-#
-# print("#" * 20, " Block 3", "#" * 20)
-# print()
-#
-# most_important_crop_per_catchment = {}
-# for feature in input_layer:
-#     sdn_crops_clippedDs = gdal.Warp(
-#         cutlineDSName=catchment_data_file,
-#         cutlineWhere="objectid = {}".format(objectId),
-#         cropToCutline=False,
-#     )
-#
-#     sdn_crops_prodArray = gdarr.DatasetReadAsArray(input_layer)
-#     sdn_crops_prodArray[sdn_crops_prodArray > no_data_value] = 0
-#
-#     most_important_crop_per_catchment[objectId] = [
-#         most_important_crop,
-#         int(most_important_crop_amount),
-#         0,
-#     ]
-#
-#
+
+print("#" * 20, " Block 3", "#" * 20)
+print()
+
+
+most_important_crop_per_catchment = {}
+for feature in input_layer:
+
+    objectId = feature.GetFieldAsString("objectid")
+    sdn_crops_clippedDs = gdal.Warp("",
+        sdn_cropsDs,format = "Mem",
+        cutlineDSName=catchment_data_file,
+        cutlineWhere="objectid = {}".format(objectId),
+        cropToCutline=False
+    )
+    
+    sdn_crops_prodArray = gdarr.DatasetReadAsArray(sdn_crops_clippedDs)
+    
+    # Set the No data value to zero 
+    # If noData value is same, for all the bands the same value can be taken 
+    # from first band and set to zero
+    if same_no_data_value:
+        nodata_value = no_data_value.get(1)
+        sdn_crops_prodArray[sdn_crops_prodArray == nodata_value] = 0
+    # If noData values are different for each band, then loop over them for each band
+    # and set zero to those values
+    else: 
+        for i,j in no_data_value.items():
+            sdn_crops_prodArray_band = sdn_crops_prodArray[i-1]
+            sdn_crops_prodArray_band[sdn_crops_prodArray_band == j] = 0
+    
+    # Getting the Numberof bands, ysize and xsize from the array shape
+    nr_bands,ysize,xsize = sdn_crops_prodArray.shape
+
+    # Reshaping the array into a 2 dimensional array where each row 
+    # has pixel values of the same band and columns are the same position 
+    # of different bands
+    # 2D Array (number of bands * number of pixels in raster)
+    sdn_crops_prod2dArray = sdn_crops_prodArray.reshape(nr_bands,ysize*xsize)
+
+    # Getting the sum of all the pixels in each band
+    sdn_crop_prodSum = np.sum(sdn_crops_prod2dArray,axis=1)
+    
+    # Getting the maximum value and its index from the sum of bands 
+    # This gives the crop that has the most production for the feature
+    most_important_crop_index,most_important_crop_amount = np.argmax(sdn_crop_prodSum),np.max(sdn_crop_prodSum)
+    
+    # If maximum value is zero, it means that there are no crops produced in that catchment
+    # None is assigned to crop in that case
+    most_important_crop = crop_list[most_important_crop_index] if int(most_important_crop_amount) != 0 else None
+
+    most_important_crop_per_catchment[int(objectId)] = [
+        most_important_crop,
+        int(most_important_crop_amount),
+        0,
+    ]
+
 # ############# 4 ################
-# print("#" * 10, " Block 4", "#" * 10)
-# print()
-#
-#
-# cred_path = r"..\credentials.json"
-#
-# # Read the login details from json file for safe connection.
-# with open(cred_path, "r") as login:
-#     db_con_data = json.load(login)
-#
-# db_host = db_con_data["host"]
-#
-# conn_string = "host='%s' port='%d' user='%s' password='%s' dbname='%s'" % (
-#     db_host,
-#     db_port,
-#     db_username,
-#     db_pwd,
-#     db_name,
-# )
-#
-# with psycopg2.connect(conn_string) as conn:
-#     with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-#         selectQuery = """
-#         """
-#         cursor.execute(selectQuery)
-#         records = cursor.fetchall()
-#         for record in records:
-#             most_important_crop_per_catchment[record["objectid"]][2] = int(
-#                 sum(crops_cons_total)
-#             )
-#
-#
-# print(most_important_crop_per_catchment)
-# print()
-#
+print("#" * 10, " Block 4", "#" * 10)
+print()
+
+
+cred_path = r"../credentials.json"
+
+# Read the login details from json file for safe connection.
+with open(cred_path, "r") as login:
+    db_con_data = json.load(login)
+
+
+# Defining the credentials to connect to the server from the json file
+db_host = db_con_data["host"]
+db_port = db_con_data["port"]
+db_username = db_con_data["user"]
+db_pwd = db_con_data["pwd"]
+db_name = db_con_data["db"]
+
+
+conn_string = "host='%s' port='%d' user='%s' password='%s' dbname='%s'" % (
+    db_host,
+    db_port,
+    db_username,
+    db_pwd,
+    db_name,
+)
+
+# Connecting to Postgresql driver with the conn_string parameters
+# from the json file
+with psycopg2.connect(conn_string) as conn:
+    with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+
+        # SQL query to get the cities that correspond to each catchment
+        # In the given data, the catchments are service areas for each cities
+        # hence, every city will correspond to one catchment. A spatial relation is
+        # made to join the city attributes with the catchment 
+        selectQuery = """
+        select c.id as city_id,cat.id as catchment_id,c.city,c.pop2017,cat.objectid
+        from sudan.cities as c
+        join sudan.catchments as cat on st_within(c.geom,cat.geom)
+        """        
+        # Run the SQL query
+        cursor.execute(selectQuery)
+
+        # Get the records from the query
+        records = cursor.fetchall()
+
+        # Loop over the records
+        for record in records:
+            most_important_crop = most_important_crop_per_catchment[record["objectid"]][0]
+            # The crop consumption is the product of food per capita of the crop (provided above) 
+            # with the population from the cities table
+            pop = float(record["pop2017"])
+            # If no crop is important i.e. catchment has None value, returns zero for crop consumption
+            crops_cons_total = food_per_capita[most_important_crop]*pop if most_important_crop is not None else 0
+            most_important_crop_per_catchment[record["objectid"]][2] = int(crops_cons_total)
+
+
+print(json.dumps(most_important_crop_per_catchment,indent=3))
+print()
+
 # ############# 5 ################
 # print("#" * 10, " Block 5", "#" * 10)
 # print()
