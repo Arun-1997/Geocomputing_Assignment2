@@ -254,7 +254,7 @@ with psycopg2.connect(conn_string) as conn:
         # SQL query to get the cities that correspond to each catchment
         # In the given data, the catchments are service areas for each cities
         # hence, every city will correspond to one catchment. A spatial relation is
-        # made to join the city attributes with the catchment 
+        # made to get the city attributes within the catchment 
         selectQuery = """
         select c.id as city_id,cat.id as catchment_id,c.city,c.pop2017,cat.objectid
         from sudan.cities as c
@@ -298,24 +298,26 @@ input_layer_srs = input_layer.GetSpatialRef()  # using the same crs info as the 
 output_layer = output_ds.CreateLayer(output_data_file, input_layer_srs, ogr.wkbPolygon)
 oft_int = "OFTInteger"
 oft_str = "OFTString"
-field_names = [("objectid",oft_int),("crop",oft_str), ("prod",oft_int), ("cons",oft_int)]
+field_names = [("crop",oft_str), ("prod",oft_int), ("cons",oft_int),("objectid",oft_int)]
 
 for val in field_names:
-    field_name = ogr.FieldDefn(val[0], getattr(ogr,val[1]))    # type can be changed -- Best way to do it - discuss
+    field_name = ogr.FieldDefn(val[0], getattr(ogr,val[1]))    
     field_name.SetWidth(24)
     output_layer.CreateField(field_name)
+
+
 
 for infeature in input_layer:
     objectId = infeature.GetFieldAsInteger("objectid")
     if objectId in most_important_crop_per_catchment.keys():
         outfeature = ogr.Feature(output_layer.GetLayerDefn())
-        
-        for i in range(len(field_names)):
-            fld_attr = field_names[i]
-            if fld_attr[0] == "objectid":
-                outfeature.SetField(fld_attr[0],objectId)
+        outfeature.SetField("objectid",objectId)
+        for fld_attr in field_names:
+            if fld_attr[0] == "objectid":      
+                outfeature.SetField(fld_attr[0], objectId)
             else:
-                outfeature.SetField(fld_attr[0], most_important_crop_per_catchment[objectId][i-1])
+                fld_val = most_important_crop_per_catchment[objectId][field_names.index(fld_attr)]
+                outfeature.SetField(fld_attr[0],fld_val)
         
         outfeature.SetGeometry(infeature.GetGeometryRef())
         output_layer.CreateFeature(outfeature)
