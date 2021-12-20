@@ -342,11 +342,11 @@ for infeature in input_layer:
     if objectId in most_important_crop_per_catchment.keys():
         outfeature = ogr.Feature(output_layer.GetLayerDefn())
         outfeature.SetField("objectid", objectId)
-        for fld_attr in field_names:  # Object ID information from the key
+        for fld_indx,fld_attr in enumerate(field_names):  # Object ID information from the key
             if fld_attr[0] == "objectid":
                 outfeature.SetField(fld_attr[0], objectId)
             else:  # Other field information
-                fld_val = most_important_crop_per_catchment[objectId][field_names.index(fld_attr)]
+                fld_val = most_important_crop_per_catchment[objectId][fld_indx]
                 outfeature.SetField(fld_attr[0], fld_val)
 
         # 5.4 Setting the geometry similar to the input catchment layer
